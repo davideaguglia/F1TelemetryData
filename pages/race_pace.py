@@ -39,8 +39,9 @@ DARK_LAYOUT = dict(
 
 def empty_figure(msg='No data available', height=360):
     fig = go.Figure()
+    base = {k: v for k, v in DARK_LAYOUT.items() if k not in ('xaxis', 'yaxis')}
     fig.update_layout(
-        **DARK_LAYOUT,
+        **base,
         height=height,
         annotations=[dict(
             text=msg, x=0.5, y=0.5, xref='paper', yref='paper',

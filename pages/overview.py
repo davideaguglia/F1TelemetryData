@@ -27,8 +27,9 @@ def rotate(xy, *, angle):
 
 def empty_figure(msg='Select a session to load data'):
     fig = go.Figure()
+    base = {k: v for k, v in DARK_LAYOUT.items() if k not in ('xaxis', 'yaxis')}
     fig.update_layout(
-        **DARK_LAYOUT,
+        **base,
         annotations=[dict(
             text=msg, x=0.5, y=0.5, xref='paper', yref='paper',
             showarrow=False, font=dict(size=14, color='#666666', family='Orbitron'),

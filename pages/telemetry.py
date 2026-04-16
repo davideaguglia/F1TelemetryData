@@ -30,8 +30,9 @@ DRIVER_COLORS = [
 
 def empty_figure(msg='Select drivers to display telemetry'):
     fig = go.Figure()
+    base = {k: v for k, v in DARK_LAYOUT.items() if k not in ('xaxis', 'yaxis')}
     fig.update_layout(
-        **DARK_LAYOUT,
+        **base,
         height=300,
         annotations=[dict(
             text=msg, x=0.5, y=0.5, xref='paper', yref='paper',
