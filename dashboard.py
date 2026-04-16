@@ -1,211 +1,158 @@
-from dash import Dash, html, dcc, callback, Output, Input
-import matplotlib.pyplot as plt
-import numpy as np
+import dash
+from dash import Dash, html, dcc, Input, Output, callback
 import fastf1
-import pandas as pd
-import plotly.graph_objects as go
-from dash.exceptions import PreventUpdate
-from plotly.subplots import make_subplots
+import numpy as np
 
-app = Dash(__name__, external_stylesheets=[
-    'https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@400;700&display=swap'
-])
-
+# ── FastF1 cache ────────────────────────────────────────────────────────────
 fastf1.Cache.enable_cache('./cache')
 
-# Load event schedule and default session
-event = fastf1.get_event_schedule(2024)
-current_session_info = {"year": 2024, "event": 'China', "event_type": 'R'}
-session = fastf1.get_session(current_session_info["year"], current_session_info["event"], current_session_info["event_type"])
-session.load()
-df = session.laps
-circuit = session.get_circuit_info()
-lap = session.laps.pick_fastest()
-pos = lap.get_pos_data()
-
-def rotate(xy, *, angle):
-    rot_mat = np.array([[np.cos(angle), np.sin(angle)],
-                        [-np.sin(angle), np.cos(angle)]])
-    return np.matmul(xy, rot_mat)
-
-app.layout = html.Div([
-    html.Div([
-        html.Img(src='/assets/logo.png', style={'height': '60px', 'marginRight': '20px'}),
-        html.Div('Telemetry Data', style={
-            'fontSize': '42px', 'fontFamily': 'Orbitron', 'fontWeight': 'bold', 'color': '#e10600'}),
-    ], style={'display': 'flex', 'alignItems': 'center'}),
-
-    html.Hr(style={'border': '1px solid #ccc', 'margin': '30px 0'}),
-
-    html.Div([
-        html.Label('Select the event', style={
-            'fontFamily': 'Orbitron', 'fontSize': '16px', 'color': 'black'}),
-        dcc.Dropdown(
-            options=[{'label': i, 'value': i} for i in np.unique(event['OfficialEventName'])],
-            id='controls-race-name',
-            value=event['OfficialEventName'][0],
-        ),
-        html.Div(id="session-loaded")
-    ], style={'width': '60%', 'marginBottom': '30px'}),
-
-    html.Div([
-        html.Div([
-            html.Div([
-            dcc.Graph(figure={}, id='circuit'),
-            ], style={'display': 'flex', 'justifyContent': 'center', 'alignItems': 'center', 'width': '100%'}),
-        ]), 
-
-        html.Div([
-            html.Div([
-                dcc.Graph(figure={}, id='controls-and-graph'),
-            ], style={'width': '49%', 'display': 'inline-block', 'verticalAlign': 'top'}),
-
-            html.Div([
-                html.Label('Select Drivers', style={
-                    'fontFamily': 'Orbitron', 'fontSize': '16px', 'color': 'black'}),
-                dcc.Dropdown(id='controls-driver-item', multi=True),
-                dcc.Graph(figure={}, id='controls-and-graph-driver')
-            ], style={'width': '49%', 'display': 'inline-block', 'verticalAlign': 'top'})
-        ])
-    ]),
-
-    html.Hr(style={'border': '1px solid #ccc', 'margin': '40px 0'}),
-
-    html.Div([
-        dcc.Graph(figure={}, id='telemetry'),
-    ], style={'borderRadius': '10px', 'padding': '20px', 'backgroundColor': '#fff'})
-])
-
-@app.callback(
-    Output('session-loaded', 'children'),
-    Output('circuit', 'figure'),
-    Output('controls-and-graph', 'figure'),
-    Output('controls-and-graph-driver', 'figure'),
-    Output('controls-driver-item', 'options'),
-    Output('controls-driver-item', 'value'),
-    Input('controls-race-name', 'value'),
-    Input('controls-driver-item', 'value'),
+# ── App init ────────────────────────────────────────────────────────────────
+app = Dash(
+    __name__,
+    use_pages=True,
+    external_stylesheets=[
+        'https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap'
+    ],
+    suppress_callback_exceptions=True,
 )
-def load_main_data(event_name, drivers):
-    global session, df, circuit, lap, pos, current_session_info
+server = app.server
 
-    event_row = event[event['OfficialEventName'] == event_name].iloc[0]
-    year = event_row['EventDate'].year
-    location = event_row['Location']
-    session_changed = (current_session_info["year"] != year or current_session_info["event"] != location)
+# ── Helpers ──────────────────────────────────────────────────────────────────
+YEARS = [2025, 2024, 2023]
 
-    if session_changed:
-        session = fastf1.get_session(year, location, 'R')
-        session.load()
-        df = session.laps
-        circuit = session.get_circuit_info()
-        lap = session.laps.pick_fastest()
-        pos = lap.get_pos_data()
-        current_session_info = {"year": year, "event": location, "event_type": 'R'}
-
-    driver_options = [{'label': i, 'value': i} for i in np.unique(df['Driver'].dropna())]
-    if session_changed or not drivers:
-        default_drivers = list(df['Driver'].dropna().unique()[:2])
-        drivers = default_drivers
-
-    # Circuit map
-    fig3 = go.Figure()
-    track = pos.loc[:, ('X', 'Y')].to_numpy()
-    # Close the loop by adding the first point to the end if it's not already there
-    if not np.allclose(track[0], track[-1]):
-        track = np.vstack([track, track[0]])
-
-    track_angle = circuit.rotation / 180 * np.pi
-    rotated_track = rotate(track, angle=track_angle)
-
-    x_min, x_max = rotated_track[:, 0].min() - 2000, rotated_track[:, 0].max() + 2000
-    y_min, y_max = rotated_track[:, 1].min() - 2000, rotated_track[:, 1].max() + 2000
-
-    fig3.add_trace(go.Scatter(
-        x=rotated_track[:, 0],
-        y=rotated_track[:, 1],
-        mode='lines',
-        line=dict(color='purple', width=8),
-        name='Track Line'))
-
-    fig3.update_layout(
-        width=800,
-        height=700,
-        template='plotly_white',
-        title=dict(text='Circuit Track', x=0.5, xanchor='center'),
-        title_font=dict(family='Orbitron', size=30, color='black', weight='bold'),
-        font_family='Orbitron',
-        xaxis=dict(range=[x_min, x_max], scaleanchor="y", showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(range=[y_min, y_max], showgrid=False, zeroline=False, showticklabels=False),
-        xaxis_fixedrange=True, yaxis_fixedrange=True)
-
-    fig1 = go.Figure()
-    summary = df.groupby('Driver').agg({'Position': lambda x: x.dropna().iloc[-1], 'LapTime': 'min'}).reset_index()
-    summary['LapTime (s)'] = summary['LapTime'].dt.total_seconds()
-    fig1.add_trace(go.Scatter(x=summary['Position'], y=summary['LapTime (s)'], mode='markers+text', text=summary['Driver'], textposition='top center', marker=dict(size=10)))
-    fig1.update_layout(xaxis_title='Final Position', yaxis_title='Best Lap Time (s)', title='Final Position vs Best Lap Time', font_family="Orbitron")
-
-    fig2 = go.Figure()
-    for driver in drivers:
-        try:
-            lap = session.laps.pick_drivers(driver).pick_fastest()
-            tel = lap.get_car_data().add_distance()
-            fig2.add_trace(go.Scatter(x=tel['Distance'], y=tel['Speed'], mode='lines', name=driver))
-        except Exception as e:
-            print(f"Could not load telemetry for {driver}: {e}")
-    #fig2.update_layout(xaxis_title='Distance', yaxis_title='Speed', font_family="Orbitron", title=dict(text='Driver Speed vs Distance', x=0.5))
-    #fig2.update_layout(xaxis_title='Distance', yaxis_title='Speed', font_family="Orbitron")
-    
-    return "", fig3, fig1, fig2, driver_options, drivers
-
-@app.callback(
-    Output('telemetry', 'figure'),
-    Input('controls-and-graph', 'hoverData'),
-    Input('controls-driver-item', 'value'),
-)
-def update_telemetry_on_hover(hover_data, drivers):
-    if hover_data is None:
-        raise PreventUpdate
-
-    driver_hovered = hover_data['points'][0]['text']
-    fig4 = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.025)
-
+def get_race_options(year):
     try:
-        lap = session.laps.pick_drivers(driver_hovered).pick_fastest()
-        tel = lap.get_car_data().add_distance()
-        tel['Brake'] = tel['Brake'].astype(int)*100
+        schedule = fastf1.get_event_schedule(year, include_testing=False)
+        names = schedule['OfficialEventName'].dropna().unique().tolist()
+        return [{'label': n, 'value': n} for n in names]
+    except Exception:
+        return []
 
-        # Speed
-        fig4.add_trace(go.Scatter(x=tel['Distance'], y=tel['Speed'], mode='lines', name='Speed'), row=1, col=1)
+def get_default_race(year):
+    opts = get_race_options(year)
+    return opts[0]['value'] if opts else None
 
-        # Throttle and Brake in same subplot
-        fig4.add_trace(go.Scatter(x=tel['Distance'], y=tel['Throttle'], mode='lines', name='Throttle', line=dict(color='green')), row=2, col=1)
-        fig4.add_trace(go.Scatter(x=tel['Distance'], y=tel['Brake'], mode='lines', name='Brake', line=dict(color='red')), row=2, col=1)
+SESSION_TYPES = [
+    {'label': 'Race',            'value': 'R'},
+    {'label': 'Qualifying',      'value': 'Q'},
+    {'label': 'Practice 1',      'value': 'FP1'},
+    {'label': 'Practice 2',      'value': 'FP2'},
+    {'label': 'Practice 3',      'value': 'FP3'},
+    {'label': 'Sprint',          'value': 'S'},
+    {'label': 'Sprint Qualifying','value': 'SQ'},
+]
 
-        # Gear
-        fig4.add_trace(go.Scatter(x=tel['Distance'], y=tel['nGear'], mode='lines', name='Gear'), row=3, col=1)
+# Pre-load 2024 race options (default year)
+_default_race_options = get_race_options(2024)
+_default_race = _default_race_options[0]['value'] if _default_race_options else None
 
-        # RPM
-        fig4.add_trace(go.Scatter(x=tel['Distance'], y=tel['RPM'], mode='lines', name='RPM'), row=4, col=1)
+# ── Layout ───────────────────────────────────────────────────────────────────
+app.layout = html.Div([
 
-    except Exception as e:
-        print(f"Could not load telemetry for {driver_hovered}: {e}")
+    # Shared state across pages
+    dcc.Store(id='session-store', data={
+        'year': 2024,
+        'race': _default_race,
+        'session_type': 'R',
+    }),
+    dcc.Store(id='year-schedule-store', data={'year': 2024, 'options': _default_race_options}),
 
-    fig4.update_layout(
-        height=1100,
-        title=dict(text=f'{driver_hovered}', x=0.5),
-        title_font=dict(family='Orbitron', size=30, color='black', weight='bold'),
-        font_family="Orbitron",
-        showlegend=True
-    )
+    # ── Sidebar ───────────────────────────────────────────────────────────
+    html.Div([
 
-    fig4.update_yaxes(title_text='Speed', row=1, col=1)
-    fig4.update_yaxes(title_text='Throttle / Brake', row=2, col=1)
-    fig4.update_yaxes(title_text='Gear', row=3, col=1)
-    fig4.update_yaxes(title_text='RPM', row=4, col=1)
-    fig4.update_xaxes(title_text='Distance', row=4, col=1)
+        # Logo / branding
+        html.Div([
+            html.Img(src='/assets/logo.png', style={'height': '34px'}),
+            html.Div([
+                html.Span('F1 TELEMETRY', style={'display': 'block'}),
+                html.Span('DASHBOARD', style={'display': 'block', 'color': 'var(--f1-red)'}),
+            ], className='sidebar-logo-text'),
+        ], className='sidebar-logo'),
 
-    return fig4
+        # Navigation links
+        html.Div([
+            html.Div('PAGES', className='sidebar-section-label'),
+            dcc.Link(
+                html.Div([html.Span('▣', className='nav-icon'), 'Race Overview'],
+                         className='sidebar-nav-link', id='nav-overview'),
+                href='/',
+            ),
+            dcc.Link(
+                html.Div([html.Span('◈', className='nav-icon'), 'Driver Telemetry'],
+                         className='sidebar-nav-link', id='nav-telemetry'),
+                href='/telemetry',
+            ),
+            dcc.Link(
+                html.Div([html.Span('◉', className='nav-icon'), 'Race Pace'],
+                         className='sidebar-nav-link', id='nav-race-pace'),
+                href='/race-pace',
+            ),
+        ], className='sidebar-section'),
+
+        # Session controls
+        html.Div([
+            html.Div('SESSION', className='sidebar-controls-title'),
+
+            html.Label('YEAR', className='control-label'),
+            dcc.Dropdown(
+                id='year-dropdown',
+                options=[{'label': str(y), 'value': y} for y in YEARS],
+                value=2024,
+                clearable=False,
+                style={'marginBottom': '10px'},
+            ),
+
+            html.Label('RACE', className='control-label'),
+            dcc.Dropdown(
+                id='race-dropdown',
+                options=_default_race_options,
+                value=_default_race,
+                clearable=False,
+                style={'marginBottom': '10px'},
+            ),
+
+            html.Label('SESSION', className='control-label'),
+            dcc.Dropdown(
+                id='session-type-dropdown',
+                options=SESSION_TYPES,
+                value='R',
+                clearable=False,
+            ),
+        ], className='sidebar-controls'),
+
+    ], className='sidebar'),
+
+    # ── Main content ──────────────────────────────────────────────────────
+    html.Div([
+        dash.page_container
+    ], className='main-content'),
+
+], className='app-container')
+
+
+# ── Callbacks ────────────────────────────────────────────────────────────────
+
+@callback(
+    Output('race-dropdown', 'options'),
+    Output('race-dropdown', 'value'),
+    Output('year-schedule-store', 'data'),
+    Input('year-dropdown', 'value'),
+)
+def update_race_options(year):
+    options = get_race_options(year)
+    default = options[0]['value'] if options else None
+    return options, default, {'year': year, 'options': options}
+
+
+@callback(
+    Output('session-store', 'data'),
+    Input('year-dropdown', 'value'),
+    Input('race-dropdown', 'value'),
+    Input('session-type-dropdown', 'value'),
+)
+def update_session_store(year, race, session_type):
+    return {'year': year, 'race': race, 'session_type': session_type}
+
 
 if __name__ == '__main__':
     app.run(debug=True)
